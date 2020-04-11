@@ -2,6 +2,7 @@ from __future__ import print_function
 import argparse
 import torch
 import torch.nn as nn
+import time
 
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -36,6 +37,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
         # training the model #
         ######################
         model.train()
+        start = time.perf_counter()
         for batch_idx, batch in enumerate(train_loader):
             img = batch['image']
             target = batch['cate']
@@ -68,14 +70,18 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
                     )
                 )
                 with open(os.path.join(args.save_directory, 'train_losses.txt'), 'a+') as f:
-                    f.write('Train Epoch: {} pts_loss{:.10f}\n'.format(epoch_id, loss.item()))
-
+                    f.write('Train Epoch: {} pts_loss: {:.10f}\n'.format(epoch_id, loss.item()))
+        elapsed = time.perf_counter() - start
+        print("Trained elapsed: %.5f" % elapsed)
+        with open(os.path.join(args.save_directory, 'train_time.txt'), 'a+') as f:
+            f.write('Train Epoch: {} time: {:.5f}\n'.format(epoch_id, elapsed))
         ######################
         # validate the model #
         ######################
         valid_mean_pts_loss = 0.0
 
         model.eval()  # prep model for evaluation
+        start = time.perf_counter()
         with torch.no_grad():
             valid_batch_cnt = 0
 
@@ -100,7 +106,11 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
                 )
             )
             with open(os.path.join(args.save_directory, 'valid_losses.txt'), 'a+') as f:
-                f.write('Eval Epoch: pts_loss{:.10f}\n'.format(valid_mean_pts_loss))
+                f.write('Eval Epoch: pts_loss: {:.10f}\n'.format(valid_mean_pts_loss))
+        elapsed = time.perf_counter() - start
+        print("Valid elapsed: %.5f" % elapsed)
+        with open(os.path.join(args.save_directory, 'valid_time.txt'), 'a+') as f:
+            f.write('Valid Epoch: {} time: {:.5f}\n'.format(epoch_id, elapsed))
         print('====================================================')
         # save model
         if args.save_model and epoch_id % args.save_interval == 0:
