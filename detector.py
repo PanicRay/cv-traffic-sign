@@ -6,7 +6,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
 from torchvision import datasets, transforms
-from myNN import resnet18, resnet34, resnet50, resnet101, resnet152, GoogLeNet
+
+from data import get_train_test_set
+from myNN import FPN101, resnet18, resnet34, resnet50, resnet101, resnet152, GoogLeNet
 
 import runpy
 import numpy as np
@@ -25,7 +27,6 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
             os.makedirs(args.save_directory)
 
     epoch = args.epochs
-    pts_criterion = criterion
 
     train_losses = []
     valid_losses = []
@@ -53,7 +54,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
             output_pts = model(input_img)
 
             # get loss
-            loss = pts_criterion(output_pts, target_pts)
+            loss = criterion(output_pts, target_pts)
 
             # do BP automatically
             loss.backward()
@@ -89,7 +90,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
 
                 output_pts = model(input_img)
 
-                valid_loss = pts_criterion(output_pts, target_pts)
+                valid_loss = criterion(output_pts, target_pts)
 
                 valid_mean_pts_loss += valid_loss.item()
 
@@ -115,8 +116,10 @@ def main_test():
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.001)')
-    parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
-                        help='SGD momentum (default: 0.5)')
+    parser.add_argument('--alg', type=str, default='adam',
+                        help='select optimzer SGD, adam, or other')
+    parser.add_argument('--loss', type=str, default='CE',
+                        help='loss function')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
@@ -129,6 +132,8 @@ def main_test():
                         help='learnt models are saving here')
     parser.add_argument('--phase', type=str, default='Train',   # Train/train, Predict/predict, Finetune/finetune
                         help='training, predicting or finetuning')
+    parser.add_argument('--net', type=str, default='resnet101',
+                        help='DefaultNet, ResNet***[18,34,50,101,152], MobileNet or GoogLeNet')
     args = parser.parse_args()
     ###################################################################################
     torch.manual_seed(args.seed)
@@ -142,48 +147,68 @@ def main_test():
     train_set, test_set = get_train_test_set()
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     valid_loader = torch.utils.data.DataLoader(test_set, batch_size=args.test_batch_size)
-
+    # 输出类别定义
+    categories =62
     print('===> Building Model')
     # For single GPU
     if args.net == 'ResNet18' or args.net == 'resnet18':
         model = resnet18()
         in_features = model.fc.in_features
-        #model.fc = nn.Linear(in_features, pts_len)
+        model.fc = nn.Linear(in_features, categories)
         model = model.to(device)
     elif args.net == 'ResNet34' or args.net == 'resnet34':
         model = resnet34()
         in_features = model.fc.in_features
-        #model.fc = nn.Linear(in_features, pts_len)
+        model.fc = nn.Linear(in_features, categories)
         model = model.to(device)
     elif args.net == 'ResNet50' or args.net == 'resnet50':
         model = resnet50()
         in_features = model.fc.in_features
-        #model.fc = nn.Linear(in_features, pts_len)
+        model.fc = nn.Linear(in_features, categories)
         model = model.to(device)
     elif args.net == 'ResNet101' or args.net == 'resnet101':
         model = resnet101()
         in_features = model.fc.in_features
-        #model.fc = nn.Linear(in_features, pts_len)
+        model.fc = nn.Linear(in_features, categories)
         model = model.to(device)
     elif args.net == 'ResNet152' or args.net == 'resnet152':
         model = resnet152()
         in_features = model.fc.in_features
-        #model.fc = nn.Linear(in_features, pts_len)
+        model.fc = nn.Linear(in_features, categories)
         model = model.to(device)
     elif args.net == 'GoogLeNet' or args.net == 'googlenet':
-        model = GoogLeNet(num_classes=pts_len).to(device)
-    elif args.net == 'FPN':
+        model = GoogLeNet(num_classes=categories).to(device)
+    else:
+        model = resnet50()
+        in_features = model.fc.in_features
+        model.fc = nn.Linear(in_features, categories)
+        model = model.to(device)
+    '''elif args.net == 'FPN':
         model = FPN101(args.batch_size).to(device)
     else:
-        model = Net(args.use_bn).to(device)
+        model = Net(args.use_bn).to(device)'''
     ####################################################################
-    criterion_pts = nn.MSELoss()
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    if args.loss == 'CE':
+        criterion = nn.CrossEntropyLoss()
+    else:
+        criterion = nn.CrossEntropyLoss()
+    ####################################################################
+    # Freeze all layer except ip3, if current mode is finetune
+    if args.phase == 'Finetune':
+        start, end = (args.layer_lockdown.split(':'))
+        for param in list(model.parameters())[start:end]:
+            param.requires_grad = False
+    if args.alg == 'SGD':
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    elif args.alg == 'adam' or args.alg == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    else:
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
     ####################################################################
     if args.phase == 'Train' or args.phase == 'train':
         print('===> Start Training')
         train_losses, valid_losses = \
-            train(args, train_loader, valid_loader, model, criterion_pts, optimizer, device)
+            train(args, train_loader, valid_loader, model, criterion, optimizer, device)
         print('====================================================')
     elif args.phase == 'Test' or args.phase == 'test':
         print('===> Test')
@@ -194,6 +219,9 @@ def main_test():
     elif args.phase == 'Predict' or args.phase == 'predict':
         print('===> Predict')
         # how to do predict?
+    else:
+        print('===> Verify')
+
 
 
 if __name__ == '__main__':
