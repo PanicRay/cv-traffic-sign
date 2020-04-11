@@ -65,7 +65,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                         loss.item()
                     )
                 )
-            with open('train_losses.txt', 'a+') as f:
+            with open(os.path.join(args.save_directory, 'train_losses.txt'), 'a+') as f:
                 f.write('Train Epoch: {} pts_loss{:.10f}\n'.format(epoch_id, loss.item()))
 
         ######################
@@ -96,7 +96,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                     valid_mean_pts_loss
                 )
             )
-            with open('valid_losses.txt', 'a+') as f:
+            with open(os.path.join(args.save_directory, 'valid_losses.txt'), 'a+') as f:
                 f.write('Eval Epoch: pts_loss{:.10f}\n'.format(valid_mean_pts_loss))
         print('====================================================')
         # save model
