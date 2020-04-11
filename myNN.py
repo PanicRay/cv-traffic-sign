@@ -7,6 +7,83 @@ from torch.jit.annotations import Optional, Tuple
 from torch import Tensor
 
 
+# Default NN from project Demo
+class Net(nn.Module):
+    def __init__(self, use_bn):
+        super(Net, self).__init__()
+        # Backbone:
+        # in_channel, out_channel, kernel_size, stride, padding
+        # block 1
+        self.conv1_1 = nn.Conv2d(1, 8, 5, 2, 0)
+        if use_bn: self.bn1 = nn.BatchNorm2d(8)
+        # block 2
+        self.conv2_1 = nn.Conv2d(8, 16, 3, 1, 0)
+        self.conv2_2 = nn.Conv2d(16, 16, 3, 1, 0)
+        # block 3
+        self.conv3_1 = nn.Conv2d(16, 24, 3, 1, 0)
+        self.conv3_2 = nn.Conv2d(24, 24, 3, 1, 0)
+        # block 4
+        self.conv4_1 = nn.Conv2d(24, 40, 3, 1, 1)
+        # points branch
+        self.conv4_2 = nn.Conv2d(40, 80, 3, 1, 1)
+        self.ip1 = nn.Linear(4 * 4 * 80, 128)
+        self.ip2 = nn.Linear(128, 128)
+        self.ip3 = nn.Linear(128, 42)
+        # common used
+        self.prelu1_1 = nn.PReLU()
+        self.prelu2_1 = nn.PReLU()
+        self.prelu2_2 = nn.PReLU()
+        self.prelu3_1 = nn.PReLU()
+        self.prelu3_2 = nn.PReLU()
+        self.prelu4_1 = nn.PReLU()
+        self.prelu4_2 = nn.PReLU()
+        self.preluip1 = nn.PReLU()
+        self.preluip2 = nn.PReLU()
+        self.ave_pool = nn.AvgPool2d(2, 2, ceil_mode=True)
+
+    def forward(self, x):
+        # block 1
+        # print('x input shape: ', x.shape)
+        x = self.conv1_1(x)
+        try:
+            x = self.bn1(x)
+        except AttributeError:
+            pass
+        x = self.ave_pool(self.prelu1_1(x))
+        # print('x after block1 and pool shape should be nx8x27x27: ', x.shape)     # good
+        # block 2
+        x = self.prelu2_1(self.conv2_1(x))
+        # print('b2: after conv2_1 and prelu shape should be nx16x25x25: ', x.shape) # good
+        x = self.prelu2_2(self.conv2_2(x))
+        # print('b2: after conv2_2 and prelu shape should be nx16x23x23: ', x.shape) # good
+        x = self.ave_pool(x)
+        # print('x after block2 and pool shape should be nx16x12x12: ', x.shape)
+        # block 3
+        x = self.prelu3_1(self.conv3_1(x))
+        # print('b3: after conv3_1 and pool shape should be nx24x10x10: ', x.shape)
+        x = self.prelu3_2(self.conv3_2(x))
+        # print('b3: after conv3_2 and pool shape should be nx24x8x8: ', x.shape)
+        x = self.ave_pool(x)
+        # print('x after block3 and pool shape should be nx24x4x4: ', x.shape)
+        # block 4
+        x = self.prelu4_1(self.conv4_1(x))
+        # print('x after conv4_1 and pool shape should be nx40x4x4: ', x.shape)
+
+        # points branch
+        ip3 = self.prelu4_2(self.conv4_2(x))
+        # print('pts: ip3 after conv4_2 and pool shape should be nx80x4x4: ', ip3.shape)
+        ip3 = ip3.view(-1, 4 * 4 * 80)
+        # print('ip3 flatten shape should be nx1280: ', ip3.shape)
+        ip3 = self.preluip1(self.ip1(ip3))
+        # print('ip3 after ip1 shape should be nx128: ', ip3.shape)
+        ip3 = self.preluip2(self.ip2(ip3))
+        # print('ip3 after ip2 shape should be nx128: ', ip3.shape)
+        ip3 = self.ip3(ip3)
+        # print('ip3 after ip3 shape should be nx42: ', ip3.shape)
+
+        return ip3
+
+
 # ======================================================ResNet======================================================== #
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -612,156 +689,3 @@ class BasicConv2d(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         return F.relu(x, inplace=True)
-
-
-'''FPN in PyTorch.
-
-See the paper "Feature Pyramid Networks for Object Detection" for more details.
-'''
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-from torch.autograd import Variable
-
-
-class Bottleneck(nn.Module):
-    expansion = 4
-
-    def __init__(self, in_planes, planes, stride=1):
-        super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.conv3 = nn.Conv2d(planes, self.expansion*planes, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(self.expansion*planes)
-
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_planes != self.expansion*planes:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(self.expansion*planes)
-            )
-
-    def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = F.relu(self.bn2(self.conv2(out)))
-        out = self.bn3(self.conv3(out))
-        out += self.shortcut(x)
-        out = F.relu(out)
-        return out
-
-
-class FPN(nn.Module):
-    def __init__(self, block, num_blocks, batch_size, num_class=42):
-        super(FPN, self).__init__()
-        self.in_planes = 64
-
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-
-        # Bottom-up layers
-        self.layer1 = self._make_layer(block,  64, num_blocks[0], stride=1)
-        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-
-        # Top layer
-        self.toplayer = nn.Conv2d(2048, 256, kernel_size=1, stride=1, padding=0)  # Reduce channels
-
-        # Smooth layers
-        self.smooth1 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-        self.smooth2 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-        self.smooth3 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-
-        # Lateral layers
-        self.latlayer1 = nn.Conv2d(1024, 256, kernel_size=1, stride=1, padding=0)
-        self.latlayer2 = nn.Conv2d( 512, 256, kernel_size=1, stride=1, padding=0)
-        self.latlayer3 = nn.Conv2d( 256, 256, kernel_size=1, stride=1, padding=0)
-
-        # Linear layers
-        self.ip2 = nn.Linear(256 * 56 * 56, num_class)
-        self.ip3 = nn.Linear(256 * 28 * 28, num_class)
-        self.ip4 = nn.Linear(256 * 14 * 14, num_class)
-        self.ip5 = nn.Linear(256 * 7 * 7, num_class)
-        self.ip = nn.Linear(4 * num_class, num_class)
-
-
-    def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
-        layers = []
-        for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes * block.expansion
-        return nn.Sequential(*layers)
-
-    def _upsample_add(self, x, y):
-        '''Upsample and add two feature maps.
-
-        Args:
-          x: (Variable) top feature map to be upsampled.
-          y: (Variable) lateral feature map.
-
-        Returns:
-          (Variable) added feature map.
-
-        Note in PyTorch, when input size is odd, the upsampled feature map
-        with `F.upsample(..., scale_factor=2, mode='nearest')`
-        maybe not equal to the lateral feature map size.
-
-        e.g.
-        original input size: [N,_,15,15] ->
-        conv2d feature map size: [N,_,8,8] ->
-        upsampled feature map size: [N,_,16,16]
-
-        So we choose bilinear upsample which supports arbitrary output sizes.
-        '''
-        _,_,H,W = y.size()
-        return F.interpolate(x, size=(H,W), mode='bilinear', align_corners=True) + y
-
-    def forward(self, x):
-        # Bottom-up
-        c1 = F.relu(self.bn1(self.conv1(x)))
-        # print('x after block1 and pool shape should be nx64x112x112: ', x.shape)     # good
-
-        c1 = F.max_pool2d(c1, kernel_size=3, stride=2, padding=1)
-        # print('x after pool shape should be nx64x56x56: ', x.shape)     # good
-        c2 = self.layer1(c1)
-        # print('after layer1 should be nx256x56x56: ', x.shape)     # good
-        c3 = self.layer2(c2)
-        # print('after layer2 should be nx512x28x28: ', x.shape)     # good
-        c4 = self.layer3(c3)
-        # print('after layer3 should be nx1024x14x14: ', x.shape)     # good
-        c5 = self.layer4(c4)
-        # print('after layer4 should be nx2048x7x7: ', x.shape)     # good
-        # Top-down
-        p5 = self.toplayer(c5)
-        # print('p5 should be nx256x7x7: ', x.shape)     # good
-        p4 = self._upsample_add(p5, self.latlayer1(c4))
-        # print('p4 should be nx256x14x14: ', x.shape)     # good
-        p3 = self._upsample_add(p4, self.latlayer2(c3))
-        # print('p3 should be nx256x28x28: ', x.shape)     # good
-        p2 = self._upsample_add(p3, self.latlayer3(c2))
-        # print('p2 should be nx256x56x56: ', x.shape)     # good
-        # Smooth
-        p4 = self.smooth1(p4)
-        p3 = self.smooth2(p3)
-        p2 = self.smooth3(p2)
-
-        # Linear layer
-        p5 = p5.view(-1, 256*7*7)
-        p5 = self.ip5(p5)
-        p4 = p4.view(-1, 256*14*14)
-        p4 = self.ip4(p4)
-        p3 = p3.view(-1, 256*28*28)
-        p3 = self.ip3(p3)
-        p2 = p2.view(-1, 256*56*56)
-        p2 = self.ip2(p2)
-        p1 = torch.cat([p5, p4, p3, p2], dim=1)
-        return self.ip(p1)
-
-
-def FPN101(batch_size):
-    # return FPN(Bottleneck, [2,4,23,3])
-    return FPN(Bottleneck, [2,2,2,2], batch_size)
