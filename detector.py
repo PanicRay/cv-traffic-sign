@@ -1,21 +1,33 @@
 from __future__ import print_function
 import argparse
+import json
+
 import torch
 import torch.nn as nn
 import time
 
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
+from collections import Counter
 
-
-from data import get_train_test_set
+from data import get_train_test_set, my_parse_line
 from myNN import resnet18, resnet34, resnet50, resnet101, resnet152, GoogLeNet
 from myFPN import FPN101
 
 import os
 
-
 torch.set_default_tensor_type(torch.FloatTensor)
+
+
+def evaluate(args, output, target, epoch):
+    cur_len = len(target)
+    smax = nn.Softmax(dim=1)
+    output = smax(output)
+    predict = [output[i][target[i]] == max(output[i]) for i in range(cur_len)]
+    with open(os.path.join(args.save_directory, 'eval_result.txt'), 'a+') as f:
+        f.write('Current Epoch: {}\n'.format(epoch))
+        f.write('\n'.join(['%d:%d' % (target[i], predict[i]) for i in range(cur_len)])+'\n')
+    return sum(predict)
 
 
 def train(args, train_loader, valid_loader, model, criterion, optimizer, device, cuda=False):
@@ -29,7 +41,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
 
     epoch = args.epochs
 
-    for epoch_id in range(epoch):
+    for epoch_id in range(args.start_epoch, epoch):
         # monitor training loss
         train_loss = 0.0
         valid_loss = 0.0
@@ -84,6 +96,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
         start = time.perf_counter()
         with torch.no_grad():
             valid_batch_cnt = 0
+            acc = 0
 
             for valid_batch_idx, batch in enumerate(valid_loader):
                 valid_batch_cnt += 1
@@ -95,14 +108,17 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device,
 
                 output_label = model(input_img)
 
+                acc += evaluate(args, output_label, target_label, epoch_id) / args.test_batch_size
+
                 # get loss
                 valid_loss = criterion(output_label, target_label)
 
                 valid_mean_pts_loss += valid_loss.item()
 
             valid_mean_pts_loss /= valid_batch_cnt * 1.0
-            print('Valid: pts_loss: {:.6f}'.format(
-                    valid_mean_pts_loss
+            acc /= valid_batch_cnt
+            print('Valid: pts_loss: {:.6f} accuracy: {:.6f}'.format(
+                    valid_mean_pts_loss, acc
                 )
             )
             with open(os.path.join(args.save_directory, 'valid_losses.txt'), 'a+') as f:
@@ -125,8 +141,10 @@ def main_test():
                         help='input batch size for testing (default: 64)')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 100)')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
-                        help='learning rate (default: 0.001)')
+    parser.add_argument('--start-epoch', type=int, default=0, metavar='N',
+                        help='epoch number starts from (default: 0)')
+    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
+                        help='learning rate (default: 0.01)')
     parser.add_argument('--alg', type=str, default='adam',
                         help='select optimzer SGD, adam, or other')
     parser.add_argument('--loss', type=str, default='CE',
@@ -205,8 +223,19 @@ def main_test():
     else:
         model = Net(args.use_bn).to(device)'''
     ####################################################################
+    def load_data_t(phase):
+        data_file = phase + '.csv'
+        data_file = os.path.join('traffic-sign', data_file)
+        with open(data_file) as f:
+            lines = f.readlines()[1:]
+        return lines
+    train_set_t = load_data_t('train_label')
+    cate_tr = [i[2] for i in [my_parse_line(i) for i in train_set_t]]
+    w = Counter(cate_tr)
+    total = sum(w.values())
+    weight = torch.FloatTensor([w[str(i)]/total for i in range(len(w))]).to(device)
     if args.loss == 'CE':
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=weight)
     else:
         criterion = nn.CrossEntropyLoss()
     ####################################################################

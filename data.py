@@ -172,17 +172,6 @@ def compute_iou(bbox1, bbox2):
     return iou
 
 
-def generate_error_data(rect, w, h, iou=0.3, error_rate=1/4.0):
-    framex, framey = rect[2]-rect[0], rect[3]-rect[1]
-    if random.random() > error_rate:
-        x, y = random.randint(-framex, framex), random.randint(-framey, framey)
-        while 0 >= rect[0]+x or 0 >= rect[1]+y or rect[2] > w or rect[3] > h \
-                or iou > compute_iou([rect[0]+x, rect[1]+y, rect[2]+x, rect[3]+y], rect):
-            x, y = random.randint(-framex, framex), random.randint(-framey, framey)
-        return [rect[0]+x, rect[1]+y, rect[2]+x, rect[3]+y], 0
-    return rect, 1
-
-
 class FaceLandmarksDataset(Dataset):
     # Face Landmarks Dataset
     def __init__(self, src_lines, phase, net, angle, transform=None):
