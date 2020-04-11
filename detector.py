@@ -17,11 +17,14 @@ import os
 torch.set_default_tensor_type(torch.FloatTensor)
 
 
-def train(args, train_loader, valid_loader, model, criterion, optimizer, device):
+def train(args, train_loader, valid_loader, model, criterion, optimizer, device, cuda=False):
     # save model
     if args.save_model:
         if not os.path.exists(args.save_directory):
             os.makedirs(args.save_directory)
+    if args.checkpoint != '':
+        model.load_state_dict(torch.load(args.checkpoint, map_location={'cuda:0': 'cuda' if cuda else 'cpu'}))
+        print('Training from checkpoint: %s' % args.checkpoint)
 
     epoch = args.epochs
 
@@ -35,18 +38,20 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
         model.train()
         for batch_idx, batch in enumerate(train_loader):
             img = batch['image']
+            target = batch['cate']
 
             # ground truth
             input_img = img.to(device)
+            target_label = target.to(device)
 
             # clear the gradients of all optimized variables
             optimizer.zero_grad()
 
             # get output
-            output_pts = model(input_img)
+            output_label = model(input_img)
 
             # get loss
-            loss = criterion(output_pts, target_pts)
+            loss = criterion(output_label, target_label)
 
             # do BP automatically
             loss.backward()
@@ -62,8 +67,8 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                         loss.item()
                     )
                 )
-            with open(os.path.join(args.save_directory, 'train_losses.txt'), 'a+') as f:
-                f.write('Train Epoch: {} pts_loss{:.10f}\n'.format(epoch_id, loss.item()))
+                with open(os.path.join(args.save_directory, 'train_losses.txt'), 'a+') as f:
+                    f.write('Train Epoch: {} pts_loss{:.10f}\n'.format(epoch_id, loss.item()))
 
         ######################
         # validate the model #
@@ -77,14 +82,15 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
             for valid_batch_idx, batch in enumerate(valid_loader):
                 valid_batch_cnt += 1
                 valid_img = batch['image']
-                landmark = batch['landmarks']
+                target = batch['cate']
 
                 input_img = valid_img.to(device)
-                target_pts = landmark.to(device)
+                target_label = target.to(device)
 
-                output_pts = model(input_img)
+                output_label = model(input_img)
 
-                valid_loss = criterion(output_pts, target_pts)
+                # get loss
+                valid_loss = criterion(output_label, target_label)
 
                 valid_mean_pts_loss += valid_loss.item()
 
@@ -97,7 +103,7 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                 f.write('Eval Epoch: pts_loss{:.10f}\n'.format(valid_mean_pts_loss))
         print('====================================================')
         # save model
-        if args.save_model:
+        if args.save_model and epoch_id % args.save_interval == 0:
             saved_model_name = os.path.join(args.save_directory, 'detector_epoch' + '_' + str(epoch_id) + '.pt')
             torch.save(model.state_dict(), saved_model_name)
 
@@ -131,6 +137,10 @@ def main_test():
                         help='DefaultNet, ResNet***[18,34,50,101,152], MobileNet or GoogLeNet')
     parser.add_argument('--angle', type=float, default=30,
                         help='max (30) angle range to rotate original image on both side')
+    parser.add_argument('--save-interval', type=int, default=20,
+                        help='after # of epoch, save the current Model')
+    parser.add_argument('--checkpoint', type=str, default='',
+                        help='continuing the training from specified checkpoint')
     args = parser.parse_args()
     ###################################################################################
     torch.manual_seed(args.seed)
@@ -204,7 +214,7 @@ def main_test():
     ####################################################################
     if args.phase == 'Train' or args.phase == 'train':
         print('===> Start Training')
-        train(args, train_loader, valid_loader, model, criterion, optimizer, device)
+        train(args, train_loader, valid_loader, model, criterion, optimizer, device, cuda=use_cuda)
         print('====================================================')
     elif args.phase == 'Test' or args.phase == 'test':
         print('===> Test')
@@ -222,13 +232,5 @@ def main_test():
 
 if __name__ == '__main__':
     main_test()
-
-
-
-
-
-
-
-
 
 

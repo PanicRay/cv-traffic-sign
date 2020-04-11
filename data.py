@@ -206,7 +206,7 @@ class FaceLandmarksDataset(Dataset):
         img = Image.open(path).convert('RGB')
         sample = {'image': img, 'net': self.net, 'angle': self.angle}
         sample = self.transform(sample)
-        sample['cate'] = cate
+        sample['cate'] = int(cate)
         if self.phase != 'train':
             sample['path'] = path
             sample['id'] = id
