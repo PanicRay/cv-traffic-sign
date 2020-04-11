@@ -114,7 +114,7 @@ class RandomNoise(object):
         for i in range(random.randint(100, 500)):
             h = random.randint(0, img_h-5)
             w = random.randint(0, img_w-5)
-            image[h:h+4, w:w+4, :] = 0
+            image[h, w, :] = 255
         return {'image': image,
                 'net': net}
 

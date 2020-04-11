@@ -28,9 +28,6 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
 
     epoch = args.epochs
 
-    train_losses = []
-    valid_losses = []
-
     for epoch_id in range(epoch):
         # monitor training loss
         train_loss = 0.0
@@ -41,11 +38,9 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
         model.train()
         for batch_idx, batch in enumerate(train_loader):
             img = batch['image']
-            landmark = batch['landmarks']
 
             # ground truth
             input_img = img.to(device)
-            target_pts = landmark.to(device)
 
             # clear the gradients of all optimized variables
             optimizer.zero_grad()
@@ -70,6 +65,8 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                         loss.item()
                     )
                 )
+            with open('train_losses.txt', 'a+') as f:
+                f.write('Train Epoch: {} pts_loss{:.10f}\n'.format(epoch_id, loss.item()))
 
         ######################
         # validate the model #
@@ -99,12 +96,13 @@ def train(args, train_loader, valid_loader, model, criterion, optimizer, device)
                     valid_mean_pts_loss
                 )
             )
+            with open('valid_losses.txt', 'a+') as f:
+                f.write('Eval Epoch: pts_loss{:.10f}\n'.format(valid_mean_pts_loss))
         print('====================================================')
         # save model
         if args.save_model:
             saved_model_name = os.path.join(args.save_directory, 'detector_epoch' + '_' + str(epoch_id) + '.pt')
             torch.save(model.state_dict(), saved_model_name)
-    return loss, 0.5
 
 def main_test():
     parser = argparse.ArgumentParser(description='Detector')
@@ -134,6 +132,8 @@ def main_test():
                         help='training, predicting or finetuning')
     parser.add_argument('--net', type=str, default='resnet101',
                         help='DefaultNet, ResNet***[18,34,50,101,152], MobileNet or GoogLeNet')
+    parser.add_argument('--angle', type=float, default=30,
+                        help='max (30) angle range to rotate original image on both side')
     args = parser.parse_args()
     ###################################################################################
     torch.manual_seed(args.seed)
@@ -144,11 +144,11 @@ def main_test():
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
     print('===> Loading Datasets')
-    train_set, test_set = get_train_test_set()
+    train_set, test_set = get_train_test_set(args.net, args.angle)
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     valid_loader = torch.utils.data.DataLoader(test_set, batch_size=args.test_batch_size)
     # 输出类别定义
-    categories =62
+    categories = 62
     print('===> Building Model')
     # For single GPU
     if args.net == 'ResNet18' or args.net == 'resnet18':
@@ -207,8 +207,7 @@ def main_test():
     ####################################################################
     if args.phase == 'Train' or args.phase == 'train':
         print('===> Start Training')
-        train_losses, valid_losses = \
-            train(args, train_loader, valid_loader, model, criterion, optimizer, device)
+        train(args, train_loader, valid_loader, model, criterion, optimizer, device)
         print('====================================================')
     elif args.phase == 'Test' or args.phase == 'test':
         print('===> Test')
